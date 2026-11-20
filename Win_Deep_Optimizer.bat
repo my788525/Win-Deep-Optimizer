@@ -61,14 +61,12 @@ function Purge-MicrosoftPinyin {
         $zhLang.InputMethodTips.Add("0804:00000409")
     }
     Set-WinUserLanguageList $langList -Force
-    Write-Host "  -> 已锁定美式键盘，微软拼音已被剔除出输入法轮换列表！" -ForegroundColor Green
+    Write-Host "  -> 已锁定美式键盘，微软拼音已被踢出输入法轮换列表！" -ForegroundColor Green
 
     Write-Host ">>> [2/3] 配置【内核级键盘代换】与注册表映射免疫锁..." -ForegroundColor Yellow
-    # 核心代换：系统只要请求 00000804 (中文默认布局)，底层强制由 00000409 (美式键盘) 代替
     Set-RegString -Path "HKCU:\Keyboard Layout\Substitutes" -Name "00000804" -Value "00000409"
     Set-RegString -Path "Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Substitutes" -Name "00000804" -Value "00000409"
     
-    # 清理用户注册表中的拼音残留 GUID
     $regProfile = "HKCU:\Control Panel\International\User Profile\zh-Hans-CN"
     if (Test-Path $regProfile) {
         Get-ItemProperty $regProfile | Get-Member -MemberType NoteProperty | Where-Object {
@@ -239,7 +237,128 @@ function Remove-WindowsAI-Full {
 }
 
 # ==============================================================================
-# 模块 4：全套恢复与重新启用中心
+# 模块 4：深度清理 C 盘垃圾与系统临时文件
+# ==============================================================================
+function Clean-DiskJunk {
+    Show-Header
+    Write-Host ">>> 正在全面扫描并深度清理 C 盘垃圾与临时文件..." -ForegroundColor Cyan
+    Write-Host ""
+
+    $initialFree = (Get-PSDrive C).Free
+
+    # 1. 用户与系统临时文件
+    Write-Host "  [1/8] 清理用户与系统临时文件 (%TEMP%, C:\Windows\Temp)..." -ForegroundColor Yellow
+    $tempFolders = @(
+        "$env:TEMP",
+        "$env:LOCALAPPDATA\Temp",
+        "C:\Windows\Temp"
+    )
+    foreach ($dir in $tempFolders) {
+        if (Test-Path $dir) {
+            Remove-Item -Path "$dir\*" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 2. Windows Update 下载缓存
+    Write-Host "  [2/8] 清理 Windows Update 安装包下载缓存..." -ForegroundColor Yellow
+    $wuDownload = "C:\Windows\SoftwareDistribution\Download"
+    if (Test-Path $wuDownload) {
+        Remove-Item -Path "$wuDownload\*" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # 3. 错误报告与内存转储
+    Write-Host "  [3/8] 清理系统错误报告、崩溃转储文件 (WER, Minidump)..." -ForegroundColor Yellow
+    $dumpPaths = @(
+        "C:\ProgramData\Microsoft\Windows\WER",
+        "$env:LOCALAPPDATA\Microsoft\Windows\WER",
+        "C:\Windows\Minidump",
+        "C:\Windows\MEMORY.DMP",
+        "$env:LOCALAPPDATA\CrashDumps"
+    )
+    foreach ($p in $dumpPaths) {
+        if (Test-Path $p) {
+            if ((Get-Item $p).PSIsContainer) {
+                Remove-Item -Path "$p\*" -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Remove-Item -Path $p -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # 4. 传递优化与预读取缓存
+    Write-Host "  [4/8] 清理传递优化缓存与 Prefetch 预读取文件..." -ForegroundColor Yellow
+    $prefetchPaths = @(
+        "C:\Windows\Prefetch",
+        "C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache"
+    )
+    foreach ($dir in $prefetchPaths) {
+        if (Test-Path $dir) {
+            Remove-Item -Path "$dir\*" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 5. 着色器缓存
+    Write-Host "  [5/8] 清理 DirectX 着色器缓存 (D3DSCache)..." -ForegroundColor Yellow
+    $shaderPaths = @(
+        "$env:LOCALAPPDATA\D3DSCache",
+        "$env:LOCALAPPDATA\NVIDIA\DXCache",
+        "$env:LOCALAPPDATA\AMD\DxCache"
+    )
+    foreach ($dir in $shaderPaths) {
+        if (Test-Path $dir) {
+            Remove-Item -Path "$dir\*" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 6. 系统诊断与安装更新日志
+    Write-Host "  [6/8] 清理 Windows 诊断与安装日志 (CBS, DISM, Panther)..." -ForegroundColor Yellow
+    $logPaths = @(
+        "C:\Windows\Logs\CBS",
+        "C:\Windows\Logs\DISM",
+        "C:\Windows\Logs\DPX",
+        "C:\Windows\Panther"
+    )
+    foreach ($dir in $logPaths) {
+        if (Test-Path $dir) {
+            Remove-Item -Path "$dir\*" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 7. 清空 Windows 回收站
+    Write-Host "  [7/8] 清空 Windows 回收站..." -ForegroundColor Yellow
+    try {
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
+
+    # 8. 刷新缩略图与图标缓存
+    Write-Host "  [8/8] 清理资源管理器缩略图与图标缓存..." -ForegroundColor Yellow
+    $thumbPaths = @(
+        "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
+    )
+    foreach ($dir in $thumbPaths) {
+        if (Test-Path $dir) {
+            Get-ChildItem -Path $dir -Filter "thumbcache_*.db" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $dir -Filter "iconcache_*.db" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $finalFree = (Get-PSDrive C).Free
+    $freedBytes = $finalFree - $initialFree
+    if ($freedBytes -lt 0) { $freedBytes = 0 }
+
+    $freedMB = [math]::Round($freedBytes / 1MB, 2)
+    $freedGB = [math]::Round($freedBytes / 1GB, 2)
+
+    Write-Host ""
+    if ($freedGB -ge 1.0) {
+        Write-Host "  [√] C 盘垃圾清理完毕！本次共成功释放空间：$freedGB GB" -ForegroundColor Green
+    } else {
+        Write-Host "  [√] C 盘垃圾清理完毕！本次共成功释放空间：$freedMB MB" -ForegroundColor Green
+    }
+}
+
+# ==============================================================================
+# 模块 5：全套恢复与重新启用中心
 # ==============================================================================
 function Show-RestoreMenu {
     do {
@@ -321,30 +440,33 @@ do {
     Write-Host "  [1] 彻底删除微软拼音输入法 + 永久权限免疫 (自动配置美式键盘防锁死)"
     Write-Host "  [2] 彻底封杀 Windows 系统更新 (停用核心服务/破坏Medic自愈/策略拦截)"
     Write-Host "  [3] 彻底删除 Windows AI 全特性 (对标 RemoveWindowsAI 22项功能 / 释放常驻内存)"
+    Write-Host "  [4] 深度清理 C 盘垃圾与系统临时文件 (释放几GB~几十GB硬盘空间)"
     Write-Host ""
-    Write-Host "  [4] 【一键终极精简】按序执行 1 + 2 + 3 全部功能" -ForegroundColor Green
+    Write-Host "  [5] 【一键终极精简】按序执行 1 + 2 + 3 + 4 全部优化" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  [5] 还原与重新启用中心 (分类恢复：拼音 / 系统更新 / 全套 AI 特性)" -ForegroundColor Magenta
+    Write-Host "  [6] 还原与重新启用中心 (分类恢复：拼音 / 系统更新 / 全套 AI 特性)" -ForegroundColor Magenta
     Write-Host "  [0] 退出工具箱"
     Write-Host ""
     Write-Host "==========================================================================" -ForegroundColor Cyan
-    $choice = Read-Host "请输入选项编号 [0-5]"
+    $choice = Read-Host "请输入选项编号 [0-6]"
 
     switch ($choice) {
         "1" { Purge-MicrosoftPinyin; Write-Host ""; pause }
         "2" { Block-WindowsUpdate; Write-Host ""; pause }
         "3" { Remove-WindowsAI-Full; Write-Host ""; pause }
-        "4" {
+        "4" { Clean-DiskJunk; Write-Host ""; pause }
+        "5" {
             Purge-MicrosoftPinyin
             Block-WindowsUpdate
             Remove-WindowsAI-Full
+            Clean-DiskJunk
             Write-Host ""
             Write-Host "==========================================================================" -ForegroundColor Green
             Write-Host " [完成] 全套深度优化已全部执行完毕！建议注销或重启一次电脑以彻底生效。" -ForegroundColor Green
             Write-Host "==========================================================================" -ForegroundColor Green
             pause
         }
-        "5" { Show-RestoreMenu }
+        "6" { Show-RestoreMenu }
         "0" { exit }
         default { Write-Host "输入无效，请重新输入！" -ForegroundColor Red; Start-Sleep -Seconds 1 }
     }
