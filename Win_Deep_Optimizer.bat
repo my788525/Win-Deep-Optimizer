@@ -1,9 +1,10 @@
-@powershell -NoProfile -Command "Get-Content -LiteralPath '%~f0' -Encoding UTF8 | Select-Object -Skip 1 | Set-Content -LiteralPath '%temp%\Win_Deep_Optimizer_Runner.ps1' -Encoding UTF8" && powershell -NoProfile -ExecutionPolicy Bypass -File "%temp%\Win_Deep_Optimizer_Runner.ps1" & exit /b
+@fltmc >nul 2>&1 || (powershell -NoProfile -Command "Start-Process '%~f0' -Verb RunAs" & exit /b) & powershell -NoProfile -Command "Get-Content -LiteralPath '%~f0' -Encoding UTF8 | Select-Object -Skip 1 | Set-Content -LiteralPath '%temp%\Win_Deep_Optimizer_Runner.ps1' -Encoding UTF8" && powershell -NoProfile -ExecutionPolicy Bypass -File "%temp%\Win_Deep_Optimizer_Runner.ps1" || pause & exit /b
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$host.UI.RawUI.WindowTitle = "Windows 深度优化与净化工具箱 (Win-Deep-Optimizer)"
 
-# 1. 自动以管理员身份提升权限（通过 -File 原生传递，绝不闪退）
+# 1. 管理员权限状态核验与保底提权
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`"" -Verb RunAs
     exit
 }
 
