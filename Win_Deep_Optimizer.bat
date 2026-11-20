@@ -1,6 +1,6 @@
-@fltmc >nul 2>&1 || (powershell -NoProfile -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs" & exit /b)
-@powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath '%~f0' -Raw -Encoding UTF8 | Select-String -Pattern '(?s)(?<=:::PAYLOAD:::\r?\n).*' | ForEach-Object { Invoke-Expression $_.Matches[0].Value }" & exit /b
-:::PAYLOAD:::
+@fltmc >nul 2>&1 || (powershell -NoProfile -Command "Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command \"\"& { $p = (Get-Content -LiteralPath ''''%~f0'''' -Raw -Encoding UTF8) -replace ''''(?s)^.*?:::CODE:::[\r\n]+'''',''''''''; iex $p }\"\"' -Verb RunAs" & exit /b)
+@powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $p = (Get-Content -LiteralPath '%~f0' -Raw -Encoding UTF8) -replace '(?s)^.*?:::CODE:::[\r\n]+',''; iex $p }" & pause & exit /b
+:::CODE:::
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 function Set-RegDword {
@@ -41,32 +41,64 @@ function Show-Header {
 }
 
 # ==============================================================================
-# 模块 1：彻底删除微软拼音输入法并实施永久免疫
+# 模块 1：彻底删除微软拼音输入法并实施永久免疫 (支持选择保留中文美式或普通美式)
 # ==============================================================================
 function Purge-MicrosoftPinyin {
+    param([string]$PresetChoice = $null)
     Show-Header
-    Write-Host ">>> [1/3] 部署中文语言下的纯美式键盘 (0804:00000409) 防打字锁死..." -ForegroundColor Yellow
+    Write-Host ">>> 彻底删除微软拼音输入法并实施永久免疫..." -ForegroundColor Cyan
+    Write-Host ""
+    
+    $kbChoice = $PresetChoice
+    if ([string]::IsNullOrWhiteSpace($kbChoice)) {
+        Write-Host "请选择移除拼音后保留的英文键盘方案：" -ForegroundColor Yellow
+        Write-Host "  [1] 保留【简体中文 - 美式键盘】(0804:00000409) -> 保持中文语言环境，无拼音弹窗 (推荐)"
+        Write-Host "  [2] 保留/添加【英语(美国) - 普通美式键盘】(en-US 0409:00000409) -> 独立英文语言包"
+        Write-Host "  [3] 两者同时配置 (中文美式键盘 + 独立英语语言包，双重保障)"
+        Write-Host ""
+        $kbChoice = Read-Host "请输入方案编号 [1-3] (直接按回车默认选 1)"
+        if ([string]::IsNullOrWhiteSpace($kbChoice)) { $kbChoice = "1" }
+    }
+
     $langList = Get-WinUserLanguageList
     $zhLang = $langList | Where-Object { $_.LanguageTag -eq "zh-Hans-CN" }
     if ($null -eq $zhLang) {
         $langList.Add("zh-Hans-CN")
         $zhLang = $langList | Where-Object { $_.LanguageTag -eq "zh-Hans-CN" }
     }
-    
+
+    # 1. 彻底剔除微软拼音 GUID
     $pinyin1 = "0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FCEEBE02-D534-4D08-896A-770F5681D1B5}"
     $pinyin2 = "0804:{FA550B04-5AD7-411F-A5AC-CA038EC515D7}{FCEEBE02-D534-4D08-896A-770F5681D1B5}"
     $zhLang.InputMethodTips.Remove($pinyin1) | Out-Null
     $zhLang.InputMethodTips.Remove($pinyin2) | Out-Null
-    if (-not ($zhLang.InputMethodTips -contains "0804:00000409")) {
-        $zhLang.InputMethodTips.Add("0804:00000409")
-    }
-    Set-WinUserLanguageList $langList -Force
-    Write-Host "  -> 已锁定美式键盘，微软拼音已被踢出输入法轮换列表！" -ForegroundColor Green
 
-    Write-Host ">>> [2/3] 配置【内核级键盘代换】与注册表映射免疫锁..." -ForegroundColor Yellow
-    Set-RegString -Path "HKCU:\Keyboard Layout\Substitutes" -Name "00000804" -Value "00000409"
-    Set-RegString -Path "Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Substitutes" -Name "00000804" -Value "00000409"
-    
+    # 2. 根据用户选择配置键盘
+    if ($kbChoice -eq "1" -or $kbChoice -eq "3") {
+        if (-not ($zhLang.InputMethodTips -contains "0804:00000409")) {
+            $zhLang.InputMethodTips.Add("0804:00000409")
+        }
+        Set-RegString -Path "HKCU:\Keyboard Layout\Substitutes" -Name "00000804" -Value "00000409"
+        Set-RegString -Path "Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Substitutes" -Name "00000804" -Value "00000409"
+        Write-Host "  -> [√] 已配置并锁定【简体中文 - 美式键盘】(0804:00000409)" -ForegroundColor Green
+    }
+
+    if ($kbChoice -eq "2" -or $kbChoice -eq "3") {
+        $enLang = $langList | Where-Object { $_.LanguageTag -eq "en-US" }
+        if ($null -eq $enLang) {
+            $newEn = New-WinUserLanguageList en-US
+            $langList.Add($newEn[0])
+            $enLang = $langList | Where-Object { $_.LanguageTag -eq "en-US" }
+        }
+        if (-not ($enLang.InputMethodTips -contains "0409:00000409")) {
+            $enLang.InputMethodTips.Add("0409:00000409")
+        }
+        Write-Host "  -> [√] 已配置并添加【英语(美国) - 普通美式键盘】(0409:00000409)" -ForegroundColor Green
+    }
+
+    Set-WinUserLanguageList $langList -Force
+
+    # 清理注册表残留
     $regProfile = "HKCU:\Control Panel\International\User Profile\zh-Hans-CN"
     if (Test-Path $regProfile) {
         Get-ItemProperty $regProfile | Get-Member -MemberType NoteProperty | Where-Object {
@@ -75,13 +107,15 @@ function Purge-MicrosoftPinyin {
             Remove-ItemProperty -Path $regProfile -Name $_.Name -Force -ErrorAction SilentlyContinue
         }
     }
-    Write-Host "  -> 内核级布局代换已生效，默认中文输入法已被焊死在美式键盘！" -ForegroundColor Green
 
-    Write-Host ">>> [3/3] 关闭微软账户语言同步与 FOD 静默下载..." -ForegroundColor Yellow
+    # 关闭微软账户语言同步与 FOD 静默下载
     Set-RegDword -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language" -Name "Enabled" -Value 0
     Disable-ScheduledTask -TaskPath "\Microsoft\Windows\LanguageComponentsInstaller\" -TaskName "Installation" -ErrorAction SilentlyContinue | Out-Null
     Disable-ScheduledTask -TaskPath "\Microsoft\Windows\LanguageComponentsInstaller\" -TaskName "ReconcileLanguageResources" -ErrorAction SilentlyContinue | Out-Null
-    Write-Host "  [√] 微软拼音已彻底清除并免疫！" -ForegroundColor Green
+
+    Write-Host "  -> [√] 微软账户语言同步与后台自动安装任务已阻断！" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  [√] 微软拼音已彻底清除！已为您成功保留所选美式键盘，输入打字绝对安全无忧。" -ForegroundColor Green
 }
 
 # ==============================================================================
@@ -437,7 +471,7 @@ function Show-RestoreMenu {
 # ==============================================================================
 do {
     Show-Header
-    Write-Host "  [1] 彻底删除微软拼音输入法 + 永久权限免疫 (自动配置美式键盘防锁死)"
+    Write-Host "  [1] 彻底删除微软拼音输入法 + 永久免疫 (可选保留中文美式或普通美式)"
     Write-Host "  [2] 彻底封杀 Windows 系统更新 (停用核心服务/破坏Medic自愈/策略拦截)"
     Write-Host "  [3] 彻底删除 Windows AI 全特性 (对标 RemoveWindowsAI 22项功能 / 释放常驻内存)"
     Write-Host "  [4] 深度清理 C 盘垃圾与系统临时文件 (释放几GB~几十GB硬盘空间)"
@@ -456,7 +490,7 @@ do {
         "3" { Remove-WindowsAI-Full; Write-Host ""; pause }
         "4" { Clean-DiskJunk; Write-Host ""; pause }
         "5" {
-            Purge-MicrosoftPinyin
+            Purge-MicrosoftPinyin -PresetChoice "1"
             Block-WindowsUpdate
             Remove-WindowsAI-Full
             Clean-DiskJunk
